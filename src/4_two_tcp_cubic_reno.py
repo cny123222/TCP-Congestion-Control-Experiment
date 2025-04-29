@@ -6,32 +6,28 @@ from time import sleep
 import os
 import matplotlib.pyplot as plt
 
-class CorrectedTopo(Topo):
-    """确保所有流量经过100Mbps瓶颈链路"""
+class SingleSwitchTopo(Topo):
     def build(self):
         s1 = self.addSwitch('s1')
         h1 = self.addHost('h1')
         h2 = self.addHost('h2')
         h3 = self.addHost('h3')
         
-        # 所有流量必须经过的带宽限制链路
         self.addLink(h1, s1)
         self.addLink(h2, s1)
-        self.addLink(h3, s1, cls=TCLink, bw=100, delay='50ms', max_queue_size=1000)
+        self.addLink(h3, s1, cls=TCLink, bw=100, delay='50ms', max_queue_size=150)
 
 def parse_iperf_intervals(logfile):
-    """解析iperf3日志，提取时间和带宽序列"""
     timeline, bandwidths = [], []
     try:
         with open(logfile, 'r') as f:
             for line in f:
                 if 'sec' in line and 'Mbits/sec' in line and 'sender' not in line:
                     parts = line.split()
-                    time_end = float(parts[2].split('-')[1])  # 时间点（秒）
-                    bw_val = float(parts[6])                   # 带宽数值
-                    unit = parts[7]                            # 单位
-                    
-                    # 单位转换
+                    time_end = float(parts[2].split('-')[1]) 
+                    bw_val = float(parts[6]) 
+                    unit = parts[7]
+
                     if unit == 'Gbits/sec':
                         bw_val *= 1000
                     elif unit == 'Kbits/sec':
@@ -45,22 +41,28 @@ def parse_iperf_intervals(logfile):
         return [], []
 
 def plot_curves(t1, b1, t2, b2):
-    """绘制带宽变化曲线"""
     plt.figure(figsize=(12,6))
-    plt.plot(t1, b1, 'b-o', label='Flow1 (h1->h3)', markersize=5)
-    plt.plot(t2, b2, 'g--s', label='Flow2 (h2->h3)', markersize=5)
+    plt.plot(t1, b1, 'b-o', label='Cubic (h1->h3)', markersize=5)
+    plt.plot(t2, b2, 'g--s', label='Reno (h2->h3)', markersize=5)
     plt.axhline(100, color='r', linestyle=':', label='100Mbps Limit')
     plt.xlabel('Time (seconds)')
     plt.ylabel('Bandwidth (Mbps)')
     plt.ylim(0, 105)
-    plt.title('TCP Cubic Bandwidth Allocation')
+    plt.title('Cubic vs Reno Bandwidth Competition')
     plt.legend()
     plt.grid(True)
-    plt.savefig('tcp_flows.png')
-    plt.show()
+    plt.savefig('figure/two_tcp_cubic_reno_test.png')
 
 def jains_fairness(avg1, avg2):
-    """正确计算公平性指数"""
+    """计算Jain公平性指数
+    公式：
+        fairness = (x1 + x2)^2 / (2*(x1^2 + x2^2))
+    参数：
+        avg1: 流1的平均带宽
+        avg2: 流2的平均带宽
+    返回：
+        公平性指数(0.0~1.0)
+    """
     if avg1 <= 0 or avg2 <= 0:
         return 0.0
     numerator = (avg1 + avg2) ** 2
@@ -70,9 +72,9 @@ def jains_fairness(avg1, avg2):
 def main():
     os.system('sudo mn -c 2>/dev/null')
     os.system('sudo pkill -9 -f iperf3')
-    os.system('rm -f /tmp/client1.log /tmp/client2.log')  # 清理旧日志
+    os.system('rm -f /tmp/client1.log /tmp/client2.log')
 
-    net = Mininet(topo=CorrectedTopo(), link=TCLink)
+    net = Mininet(topo=SingleSwitchTopo(), link=TCLink)
     try:
         net.start()
         print("[STATUS] 拓扑启动成功")
@@ -81,22 +83,17 @@ def main():
         h1 = net.get('h1')
         h2 = net.get('h2')
 
-        # 启动服务端
         h3.cmd('iperf3 -s -p 5201 -4 --interval 1 &')
         h3.cmd('iperf3 -s -p 5202 -4 --interval 1 &')
-        sleep(2)  # 确保服务器启动
+        sleep(2)
 
-        # 同步启动客户端（使用sendCmd异步发送命令）
         h1.sendCmd('iperf3 -c 10.0.0.3 -p 5201 -t 15 -C cubic --interval 1 --logfile /tmp/client1.log')
         h2.sendCmd('iperf3 -c 10.0.0.3 -p 5202 -t 15 -C cubic --interval 1 --logfile /tmp/client2.log')
-        
-        sleep(17)  # 测试15秒 + 2秒缓冲
+        sleep(17)
 
-        # 确保进程完成
         h1.waitOutput()
         h2.waitOutput()
 
-        # 解析日志前确认文件存在
         if not os.path.exists('/tmp/client1.log'):
             print("[ERROR] client1.log未生成")
         if not os.path.exists('/tmp/client2.log'):
