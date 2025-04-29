@@ -88,7 +88,7 @@ def main():
         sleep(2)
 
         h1.sendCmd('iperf3 -c 10.0.0.3 -p 5201 -t 15 -C cubic --interval 1 --logfile /tmp/client1.log')
-        h2.sendCmd('iperf3 -c 10.0.0.3 -p 5202 -t 15 -C cubic --interval 1 --logfile /tmp/client2.log')
+        h2.sendCmd('iperf3 -c 10.0.0.3 -p 5202 -t 15 -C reno --interval 1 --logfile /tmp/client2.log')
         sleep(17)
 
         h1.waitOutput()
